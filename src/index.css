@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #115700;
+  --color-lab-bg: #d8dbd7;
+  --color-lab-surface: #f8faf8;
+  --color-lab-sidebar: #e5e8e5;
+  --color-lab-text: #0a2d00;
+}
