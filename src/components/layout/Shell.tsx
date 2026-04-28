@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Users, Monitor, ScanLine, Settings, Database, Server, Wifi, WifiOff } from 'lucide-react';
+import { LayoutDashboard, Users, Monitor, ScanLine, Settings, Database, Server, Wifi, WifiOff, Bell } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 
 interface ShellProps {
@@ -56,11 +56,21 @@ export const Header: React.FC<{ title: string }> = ({ title }) => {
   const { state, toggleSystemMode } = useAppContext();
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-lab-bg bg-lab-surface px-6">
+    <header className="flex h-14 items-center justify-between border-b border-lab-bg bg-[#2e5926] px-6">
       <div className="flex items-center">
-        <h1 className="text-lg font-semibold text-lab-text capitalize">{title.replace('-', ' ')}</h1>
+        <h1 className="text-lg font-semibold text-white capitalize">{title.replace('-', ' ')}</h1>
       </div>
       <div className="flex items-center space-x-4">
+        {state.currentUser && (state.currentUser.role === 'Admin' || state.currentUser.position === 'Lab-Incharge' || state.currentUser.position === 'Dean') && (
+          <button className="relative text-white hover:text-gray-200">
+            <Bell size={20} />
+            {state.notifications.filter(n => n.userId === state.currentUser?.id && !n.read).length > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                {state.notifications.filter(n => n.userId === state.currentUser?.id && !n.read).length}
+              </span>
+            )}
+          </button>
+        )}
         <button
           onClick={toggleSystemMode}
           className={`flex items-center space-x-2 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${

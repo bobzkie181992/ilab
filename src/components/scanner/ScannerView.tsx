@@ -4,24 +4,26 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 import { ScanLine, LogIn, LogOut, CheckCircle, AlertCircle } from 'lucide-react';
 
 export const ScannerView: React.FC = () => {
-  const { checkoutEquipment, returnEquipment } = useAppContext();
+  const { checkoutEquipment, returnEquipment, state } = useAppContext();
   const [mode, setMode] = useState<'checkout' | 'return'>('checkout');
 
   const [equipmentQr, setEquipmentQr] = useState('EQ-MAC-01');
   const [borrowerQr, setBorrowerQr] = useState('STU-001');
+  const [purpose, setPurpose] = useState('');
   const [returnCondition, setReturnCondition] = useState<'Good' | 'Fair' | 'Damaged'>('Good');
+  const [returnNotes, setReturnNotes] = useState('');
   
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
-    const res = checkoutEquipment(equipmentQr, borrowerQr);
+    const res = checkoutEquipment([equipmentQr], borrowerQr, undefined, undefined, purpose);
     setResult(res);
   };
 
   const handleReturn = (e: React.FormEvent) => {
     e.preventDefault();
-    const res = returnEquipment(equipmentQr, returnCondition);
+    const res = returnEquipment(equipmentQr, returnCondition, returnNotes);
     setResult(res);
   };
 
@@ -36,6 +38,12 @@ export const ScannerView: React.FC = () => {
           <p className="mt-2 text-sm text-slate-500">
             Simulate scanning QR codes to check equipment in or out.
           </p>
+          {!state.isOnline && (
+            <div className="mt-4 flex items-center space-x-2 rounded-lg bg-amber-50 p-3 text-[10px] font-medium text-amber-800 border border-amber-100">
+              <AlertCircle className="h-3 w-3 text-amber-600" />
+              <span>Offline Mode Active: Transactions will be queued for synchronization.</span>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <div className="mb-6 flex rounded-lg bg-slate-100 p-1">
@@ -78,32 +86,57 @@ export const ScannerView: React.FC = () => {
             </div>
 
             {mode === 'checkout' && (
-              <div className="space-y-2 pb-2">
-                <label className="text-sm font-medium text-slate-700">Borrower QR</label>
-                <input
-                  type="text"
-                  value={borrowerQr}
-                  onChange={(e) => setBorrowerQr(e.target.value)}
-                  placeholder="e.g. STU-001"
-                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                  required
-                />
-                 <p className="text-xs text-slate-500">Test codes: STU-001, FAC-001, STF-001</p>
+              <div className="space-y-4 pb-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Borrower QR</label>
+                  <input
+                    type="text"
+                    value={borrowerQr}
+                    onChange={(e) => setBorrowerQr(e.target.value)}
+                    placeholder="e.g. STU-001"
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    required
+                  />
+                  <p className="text-xs text-slate-500">Test codes: STU-001, FAC-001, STF-001</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Purpose</label>
+                  <input
+                    type="text"
+                    value={purpose}
+                    onChange={(e) => setPurpose(e.target.value)}
+                    placeholder="e.g. Research Project"
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    required
+                  />
+                </div>
               </div>
             )}
 
             {mode === 'return' && (
-              <div className="space-y-2 pb-2">
-                <label className="text-sm font-medium text-slate-700">Return Condition</label>
-                <select
-                  value={returnCondition}
-                  onChange={(e) => setReturnCondition(e.target.value as 'Good' | 'Fair' | 'Damaged')}
-                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                >
-                  <option value="Good">Good</option>
-                  <option value="Fair">Fair</option>
-                  <option value="Damaged">Damaged</option>
-                </select>
+              <div className="space-y-4 pb-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Return Condition</label>
+                  <select
+                    value={returnCondition}
+                    onChange={(e) => setReturnCondition(e.target.value as 'Good' | 'Fair' | 'Damaged')}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                  >
+                    <option value="Good">Good</option>
+                    <option value="Fair">Fair</option>
+                    <option value="Damaged">Damaged</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Return Notes</label>
+                  <textarea
+                    value={returnNotes}
+                    onChange={(e) => setReturnNotes(e.target.value)}
+                    placeholder="e.g. Any issues/observations?"
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    rows={2}
+                  />
+                </div>
               </div>
             )}
 
@@ -111,7 +144,7 @@ export const ScannerView: React.FC = () => {
               type="submit"
               className="mt-4 w-full rounded-md bg-brand py-2.5 text-sm font-semibold text-white shadow hover:bg-brand/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand block text-center"
             >
-              {mode === 'checkout' ? 'Process Check Out' : 'Process Return'}
+              {mode === 'checkout' ? 'Request Check Out' : 'Process Return'}
             </button>
           </form>
 

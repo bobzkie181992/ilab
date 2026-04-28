@@ -1,6 +1,6 @@
 {
   "name": "CCIS iLab: Smart Lab Equipment Monitor",
   "description": "A high-performance computer laboratory equipment monitoring application with advanced borrower management and QR code system.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": []
 }

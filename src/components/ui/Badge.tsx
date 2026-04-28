@@ -31,6 +31,7 @@ export function StatusBadge({ status }: { status: EquipmentStatus }) {
     Maintenance: { variant: 'warning', label: 'Maintenance' },
     Offline: { variant: 'secondary', label: 'Offline' },
     Lost: { variant: 'destructive', label: 'Lost' },
+    Reserved: { variant: 'warning', label: 'Reserved' },
   };
 
   const { variant, label } = statusConfig[status] || { variant: 'default', label: status };
