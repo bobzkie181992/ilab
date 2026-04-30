@@ -1,13 +1,28 @@
 export type BorrowerRole = 'Student' | 'Faculty' | 'Staff';
 export type UserRole = 'Admin' | BorrowerRole;
-export type EquipmentStatus = 'Available' | 'Borrowed' | 'Maintenance' | 'Offline' | 'Lost' | 'Reserved';
+export type EquipmentStatus = 'Available' | 'Borrowed' | 'Maintenance' | 'Offline' | 'Lost' | 'Reserved' | 'Queued';
 export type EquipmentCondition = 'Good' | 'Fair' | 'Damaged';
-export type BookingStatus = 'Pending Approval' | 'Confirmed' | 'Rejected' | 'Completed' | 'Cancelled' | 'Expired';
+export type BookingStatus = 'Pending Approval' | 'Confirmed' | 'Rejected' | 'Completed' | 'Cancelled' | 'Expired' | 'Queued';
 export type TicketStatus = 'Open' | 'In Progress' | 'Resolved' | 'Closed';
 export type TicketPriority = 'Low' | 'Medium' | 'High' | 'Critical';
+export type SoftwareRequestStatus = 'Pending' | 'Approved' | 'Installed' | 'Rejected';
 
-export type UserPosition = 'Dean' | 'Lab-Incharge' | 'OJT';
-export type TransactionStatus = 'Pending Approval' | 'Approved by Lab-Incharge' | 'Approved by Dean' | 'Released' | 'Active' | 'Returned' | 'Overdue';
+export interface SoftwareRequest {
+  id: string;
+  facultyId: string;
+  softwareName: string;
+  version?: string;
+  purpose: string;
+  targetComputers: string;
+  status: SoftwareRequestStatus;
+  installerUrl?: string;
+  installerName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type UserPosition = 'Dean' | 'Lab-Incharge';
+export type TransactionStatus = 'Pending Approval' | 'Approved by Lab-Incharge' | 'Approved by Dean' | 'Approved by Admin' | 'Released' | 'Active' | 'Returned' | 'Overdue' | 'Queued';
 
 export interface User {
   id: string;
@@ -22,25 +37,6 @@ export interface User {
   contactInfo: string;
   email: string;
   imageUrl?: string;
-  isOJT?: boolean;
-  faceRegistered?: boolean;
-}
-
-export interface AttendanceSchedule {
-  amIn: string; // "08:00"
-  amOut: string; // "12:00"
-  pmIn: string; // "13:00"
-  pmOut: string; // "17:00"
-}
-
-export interface OjtAttendance {
-  id: string;
-  userId: string;
-  date: string;
-  timestamp: string; // ISO string
-  type: 'Time In' | 'Time Out';
-  shift: 'AM' | 'PM';
-  status: 'Present' | 'Late' | 'Undertime';
 }
 
 export interface MaintenanceLog {
@@ -59,9 +55,9 @@ export interface MaintenanceLog {
   }>;
   additionalConcerns: string;
   preparedBy: string;
-  preparedDesignation: string;
+  preparedByDesignation: string;
   evaluatedBy: string;
-  evaluatedDesignation: string;
+  evaluatedByDesignation: string;
   evaluatedDate: string;
 }
 
@@ -162,6 +158,24 @@ export interface Notification {
   read: boolean;
 }
 
+export interface AttendanceLog {
+  id: string;
+  userId: string;
+  timestamp: string;
+  date: string; // Typically extracted from timestamp or stored separately
+  type: 'In' | 'Out';
+  status: 'Present' | 'Late' | 'Absent';
+  method: 'Face' | 'QR' | 'Manual';
+}
+
+export interface SystemSettings {
+  labName: string;
+  adminEmail: string;
+  logoUrl: string;
+  overdueAlerts: boolean;
+  adminEscalation: boolean;
+}
+
 export interface SystemState {
   isOnline: boolean;
   currentUser: User | null;
@@ -172,10 +186,22 @@ export interface SystemState {
   bookings: FacilityBooking[];
   maintenanceTickets: MaintenanceTicket[];
   maintenanceLogs: MaintenanceLog[];
+  attendanceLogs: AttendanceLog[];
+  softwareRequests: SoftwareRequest[];
   policies: Record<BorrowerRole, RulePolicy>;
-  attendanceLogs: OjtAttendance[];
-  attendanceSchedule: AttendanceSchedule;
   notifications: Notification[];
+  settings: SystemSettings;
+}
+
+export interface Notification {
+  id: string;
+  userId: string; // Recipient
+  title: string;
+  message: string;
+  type: 'Info' | 'Warning' | 'Error' | 'Success';
+  read: boolean;
+  createdAt: string;
+  targetView?: string;
 }
 
 export type DurationUnit = 'Hours' | 'Days' | 'Weeks' | 'Months' | 'Years';

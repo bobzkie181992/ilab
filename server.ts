@@ -4,15 +4,48 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
+import multer from 'multer';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+});
+const upload = multer({ storage });
 
 const db = new Database('lab_monitor.db');
 db.pragma('journal_mode = WAL');
 
 // Initialize Database Tables
+try {
+  db.exec('ALTER TABLE software_requests ADD COLUMN downloadLink TEXT;');
+} catch (e) {
+  // Ignore if column already exists
+}
+
 db.exec(`
+  CREATE TABLE IF NOT EXISTS software_requests (
+    id TEXT PRIMARY KEY,
+    facultyId TEXT,
+    softwareName TEXT,
+    version TEXT,
+    purpose TEXT,
+    targetComputers TEXT,
+    status TEXT,
+    installerUrl TEXT,
+    installerName TEXT,
+    downloadLink TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     qrCode TEXT UNIQUE,
@@ -109,6 +142,9 @@ db.exec(`
     id TEXT PRIMARY KEY,
     date TEXT,
     lab TEXT,
+    month TEXT,
+    formDate TEXT,
+    weeks TEXT, -- Stored as JSON string
     preparedBy TEXT,
     evaluatedBy TEXT,
     preparedByDesignation TEXT,
@@ -125,7 +161,32 @@ db.exec(`
     logoutStart TEXT,
     logoutEnd TEXT
   );
+  CREATE TABLE IF NOT EXISTS settings (
+    id TEXT PRIMARY KEY,
+    labName TEXT,
+    adminEmail TEXT,
+    logoUrl TEXT,
+    overdueAlerts BOOLEAN,
+    adminEscalation BOOLEAN
+  );
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    userId TEXT,
+    title TEXT,
+    message TEXT,
+    type TEXT,
+    read BOOLEAN DEFAULT 0,
+    createdAt TEXT,
+    targetView TEXT
+  );
 `);
+
+// Add targetView to notifications if missing (migration)
+try {
+  db.prepare('ALTER TABLE notifications ADD COLUMN targetView TEXT').run();
+} catch (e: any) {
+  // Ignore error if column already exists
+}
 
 // Seed Admin if not exists
 const adminExists = db.prepare('SELECT id FROM users WHERE role = ?').get('Admin');
@@ -145,6 +206,15 @@ if (!scheduleExists) {
   `).run('default', '07:30', '08:30', '16:00', '18:00');
 }
 
+// Seed Default Settings
+const settingsExists = db.prepare('SELECT id FROM settings').get();
+if (!settingsExists) {
+  db.prepare(`
+    INSERT INTO settings (id, labName, adminEmail, logoUrl, overdueAlerts, adminEscalation)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run('default', 'CCIS Main Laboratory', 'admin@ccis.edu', 'https://storage.googleapis.com/ar-auth-artifacts.appspot.com/artifacts/a895c141-8fec-4fa1-8ca6-0b8108420b92/attachments/3a29db70-a3da-4767-873b-ebccff5d414a/ccis_logo.png', 1, 1);
+}
+
 // Seed Mock Data
 const facilityCount = db.prepare('SELECT COUNT(*) as count FROM facilities').get() as any;
 if (facilityCount.count === 0) {
@@ -162,7 +232,8 @@ if (facilityCount.count === 0) {
 async function startServer() {
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.json({ limit: '20gb' }));
+  app.use(express.urlencoded({ limit: '20gb', extended: true }));
 
   const PORT = 3000;
 
@@ -200,6 +271,16 @@ async function startServer() {
   app.delete('/api/users/:id', (req, res) => {
     db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
     res.json({ success: true });
+  });
+
+  app.post('/api/auth/check-email', (req, res) => {
+    const { email } = req.body;
+    const user = db.prepare('SELECT id, name, role FROM users WHERE email = ?').get(email);
+    if (user) {
+      res.json({ exists: true, user });
+    } else {
+      res.json({ exists: false });
+    }
   });
 
   // Facilities
@@ -304,21 +385,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // Attendance Logs
-  app.get('/api/attendance', (req, res) => {
-    res.json(db.prepare('SELECT * FROM attendance_logs').all());
-  });
-
-  app.post('/api/attendance', (req, res) => {
-    const a = req.body;
-    const stmt = db.prepare(`
-      INSERT INTO attendance_logs (id, userId, timestamp, type, status, method)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(a.id, a.userId, a.timestamp, a.type, a.status, a.method);
-    res.json({ success: true });
-  });
-
   // Maintenance Tickets
   app.get('/api/maintenance-tickets', (req, res) => {
     res.json(db.prepare('SELECT * FROM maintenance_tickets').all());
@@ -381,6 +447,7 @@ async function startServer() {
     const logs = db.prepare('SELECT * FROM pm_logs').all();
     res.json(logs.map((l: any) => ({
       ...l,
+      weeks: JSON.parse(l.weeks || '[]'),
       tasks: JSON.parse(l.tasks || '{}')
     })));
   });
@@ -388,26 +455,10 @@ async function startServer() {
   app.post('/api/pm-logs', (req, res) => {
     const l = req.body;
     const stmt = db.prepare(`
-      INSERT INTO pm_logs (id, date, lab, preparedBy, evaluatedBy, preparedByDesignation, evaluatedByDesignation, evaluationDate, additionalConcerns, tasks)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO pm_logs (id, date, lab, month, formDate, weeks, preparedBy, evaluatedBy, preparedByDesignation, evaluatedByDesignation, evaluationDate, additionalConcerns, tasks)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(l.id, l.date, l.lab, l.preparedBy, l.evaluatedBy, l.preparedByDesignation, l.evaluatedByDesignation, l.evaluationDate, l.additionalConcerns, JSON.stringify(l.tasks || {}));
-    res.json({ success: true });
-  });
-
-  // Schedule
-  app.get('/api/schedule', (req, res) => {
-    res.json(db.prepare('SELECT * FROM attendance_schedule').all());
-  });
-
-  app.put('/api/schedule/default', (req, res) => {
-    const s = req.body;
-    const stmt = db.prepare(`
-      UPDATE attendance_schedule SET 
-        timeInStart = ?, timeInDeadline = ?, logoutStart = ?, logoutEnd = ?
-      WHERE id = 'default'
-    `);
-    stmt.run(s.timeInStart, s.timeInDeadline, s.logoutStart, s.logoutEnd);
+    stmt.run(l.id, l.date, l.lab, l.month, l.formDate, JSON.stringify(l.weeks || []), l.preparedBy, l.evaluatedBy, l.preparedByDesignation, l.evaluatedByDesignation, l.evaluationDate, l.additionalConcerns, JSON.stringify(l.tasks || {}));
     res.json({ success: true });
   });
 
@@ -425,7 +476,7 @@ async function startServer() {
     try {
       const tables = [
         'users', 'facilities', 'equipment', 'transactions', 
-        'attendance_logs', 'maintenance_tickets', 'bookings', 
+        'maintenance_tickets', 'bookings', 
         'pm_logs'
       ];
       db.transaction(() => {
@@ -453,11 +504,10 @@ async function startServer() {
         facilities: db.prepare('SELECT * FROM facilities').all(),
         equipment: db.prepare('SELECT * FROM equipment').all(),
         transactions: db.prepare('SELECT * FROM transactions').all(),
-        attendance_logs: db.prepare('SELECT * FROM attendance_logs').all(),
         maintenance_tickets: db.prepare('SELECT * FROM maintenance_tickets').all(),
         bookings: db.prepare('SELECT * FROM bookings').all(),
         pm_logs: db.prepare('SELECT * FROM pm_logs').all(),
-        attendance_schedule: db.prepare('SELECT * FROM attendance_schedule').all(),
+        software_requests: db.prepare('SELECT * FROM software_requests').all(),
       };
       res.json({ success: true, data });
     } catch (e: any) {
@@ -474,8 +524,8 @@ async function startServer() {
         // Clear existing data except maybe we want to keep it? No, import backup usually overrides
         const tables = [
           'users', 'facilities', 'equipment', 'transactions', 
-          'attendance_logs', 'maintenance_tickets', 'bookings', 
-          'pm_logs', 'attendance_schedule'
+          'maintenance_tickets', 'bookings', 
+          'pm_logs'
         ];
         
         tables.forEach(table => {
@@ -500,6 +550,106 @@ async function startServer() {
       res.status(500).json({ success: false, error: e.message });
     }
   });
+
+  // Software Requests
+  app.get('/api/software-requests', (req, res) => {
+    res.json(db.prepare('SELECT * FROM software_requests').all());
+  });
+
+  app.post('/api/software-requests', upload.single('installer'), (req, res) => {
+    const sr = req.body;
+    const file = req.file;
+    const stmt = db.prepare(`
+      INSERT INTO software_requests (id, facultyId, softwareName, version, purpose, targetComputers, status, installerUrl, installerName, downloadLink, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const installerUrl = file ? `/uploads/${file.filename}` : null;
+    const installerName = file ? file.originalname : null;
+
+    stmt.run(sr.id, sr.facultyId, sr.softwareName, sr.version || null, sr.purpose, sr.targetComputers, sr.status, installerUrl, installerName, sr.downloadLink || null, sr.createdAt, sr.updatedAt);
+    res.json({ success: true, data: { ...sr, installerUrl, installerName } });
+  });
+
+  app.put('/api/software-requests/:id/status', (req, res) => {
+    const stmt = db.prepare('UPDATE software_requests SET status = ?, updatedAt = ? WHERE id = ?');
+    stmt.run(req.body.status, new Date().toISOString(), req.params.id);
+    res.json({ success: true });
+  });
+
+  // Attendance Logs
+  app.get('/api/attendance-logs', (req, res) => {
+    const logs = db.prepare('SELECT * FROM attendance_logs').all();
+    res.json(logs.map((l: any) => ({
+      ...l,
+      date: l.timestamp ? new Date(l.timestamp).toLocaleDateString() : 'N/A'
+    })));
+  });
+
+  app.post('/api/attendance-logs', (req, res) => {
+    const l = req.body;
+    const stmt = db.prepare(`
+      INSERT INTO attendance_logs (id, userId, timestamp, type, status, method)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(l.id, l.userId, l.timestamp, l.type, l.status, l.method);
+    res.json({ success: true });
+  });
+
+  // Settings
+  app.get('/api/settings', (req, res) => {
+    const settings = db.prepare('SELECT * FROM settings WHERE id = ?').get('default');
+    if (settings) {
+      res.json({
+        ...settings,
+        overdueAlerts: !!settings.overdueAlerts,
+        adminEscalation: !!settings.adminEscalation
+      });
+    } else {
+      res.json(null);
+    }
+  });
+
+  app.put('/api/settings', (req, res) => {
+    const s = req.body;
+    const stmt = db.prepare(`
+      UPDATE settings SET 
+        labName = ?, adminEmail = ?, logoUrl = ?, 
+        overdueAlerts = ?, adminEscalation = ?
+      WHERE id = ?
+    `);
+    stmt.run(s.labName, s.adminEmail, s.logoUrl, s.overdueAlerts ? 1 : 0, s.adminEscalation ? 1 : 0, 'default');
+    res.json({ success: true });
+  });
+
+  app.post('/api/settings/logo', upload.single('logo'), (req, res) => {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const logoUrl = `/uploads/${req.file.filename}`;
+    db.prepare('UPDATE settings SET logoUrl = ? WHERE id = ?').run(logoUrl, 'default');
+    res.json({ success: true, logoUrl });
+  });
+
+  // Notifications
+  app.get('/api/notifications', (req, res) => {
+    const notifications = db.prepare('SELECT * FROM notifications ORDER BY createdAt DESC').all();
+    res.json(notifications.map((n: any) => ({ ...n, read: !!n.read })));
+  });
+
+  app.post('/api/notifications', (req, res) => {
+    const n = req.body;
+    db.prepare(`
+      INSERT INTO notifications (id, userId, title, message, type, read, createdAt, targetView)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(n.id, n.userId, n.title, n.message, n.type, n.read ? 1 : 0, n.createdAt, n.targetView || null);
+    res.json({ success: true });
+  });
+
+  app.put('/api/notifications/:id', (req, res) => {
+    const { read } = req.body;
+    db.prepare('UPDATE notifications SET read = ? WHERE id = ?').run(read ? 1 : 0, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.use('/uploads', express.static(uploadDir));
 
   // --- VITE MIDDLEWARE ---
 

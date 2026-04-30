@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { Sidebar, Header } from './components/layout/Shell';
 import { DashboardStats } from './components/dashboard/DashboardStats';
@@ -98,10 +98,10 @@ import { SettingsView } from './components/settings/SettingsView';
 import { EquipmentView } from './components/equipment/EquipmentView';
 import { BookingsView } from './components/bookings/BookingsView';
 import { MaintenanceView } from './components/maintenance/MaintenanceView';
-import { AttendanceView } from './components/attendance/AttendanceView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { SoftwareRequestsView } from './components/software/SoftwareRequestsView';
 import { LoginView } from './components/auth/LoginView';
-import { LayoutDashboard, Calendar, ScanLine, Cpu, Users, History, Settings, LogOut, Wrench, BarChart2, UserCircle, Fingerprint, Building2, Clock, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Calendar, ScanLine, Cpu, Users, History, Settings, LogOut, Wrench, BarChart2, UserCircle, Fingerprint, Building2, Clock, TrendingUp, DownloadCloud } from 'lucide-react';
 import { ConfirmationModal } from './components/ui/ConfirmationModal';
 
 function AppShell() {
@@ -109,6 +109,16 @@ function AppShell() {
   const [maintenanceEquipmentId, setMaintenanceEquipmentId] = useState<string | null>(null);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const { state, logout } = useAppContext();
+
+  useEffect(() => {
+    const handleChangeView = (e: any) => {
+      if (e.detail) {
+        setCurrentView(e.detail);
+      }
+    };
+    window.addEventListener('changeView', handleChangeView);
+    return () => window.removeEventListener('changeView', handleChangeView);
+  }, []);
 
   const handleMaintenance = (id: string) => {
     setMaintenanceEquipmentId(id);
@@ -121,14 +131,14 @@ function AppShell() {
 
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff', 'Student'] },
-    { id: 'attendance', label: 'OJT Attendance', icon: <Clock className="h-4 w-4" />, roles: ['Admin', 'Staff'] },
     { id: 'analytics', label: 'Insights', icon: <TrendingUp className="h-4 w-4" />, roles: ['Admin', 'Faculty'] },
-    { id: 'scanner', label: 'Borrow/Return', icon: <ScanLine className="h-4 w-4" />, roles: ['Admin', 'Staff'] },
+    { id: 'scanner', label: 'Borrow/Return', icon: <ScanLine className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff', 'Student'] },
     { id: 'equipment', label: 'Equipment', icon: <Cpu className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff', 'Student'] },
     { id: 'facility', label: 'Facility', icon: <Building2 className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff', 'Student'] },
-    { id: 'maintenance', label: 'Maintenance', icon: <Wrench className="h-4 w-4" />, roles: ['Admin'] },
+    { id: 'software', label: 'Software Requests', icon: <DownloadCloud className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff', 'Student'] },
+    { id: 'maintenance', label: 'Maintenance', icon: <Wrench className="h-4 w-4" />, roles: ['Admin', 'Staff'] },
     { id: 'users', label: 'Users', icon: <Users className="h-4 w-4" />, roles: ['Admin'] },
-    { id: 'transactions', label: 'History', icon: <History className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff'] },
+    { id: 'transactions', label: 'History', icon: <History className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff', 'Student'] },
     { id: 'settings', label: 'Settings', icon: <Settings className="h-4 w-4" />, roles: ['Admin', 'Faculty', 'Staff', 'Student'] },
   ];
 
@@ -202,10 +212,10 @@ function AppShell() {
         <Header title={NAV_ITEMS.find(n => n.id === currentView)?.label || 'Monitoring'} />
         <main className="flex-1 overflow-y-auto px-6 py-8">
           {currentView === 'dashboard' && <DashboardView />}
-          {currentView === 'attendance' && <AttendanceView />}
           {currentView === 'scanner' && <ScannerView />}
           {currentView === 'equipment' && <EquipmentView onMaintenance={handleMaintenance} />}
           {currentView === 'facility' && <BookingsView />}
+          {currentView === 'software' && <SoftwareRequestsView />}
           {currentView === 'maintenance' && (
             <MaintenanceView 
               initialEquipmentId={maintenanceEquipmentId || undefined} 

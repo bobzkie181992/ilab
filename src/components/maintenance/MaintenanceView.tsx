@@ -340,9 +340,9 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
       tasks: pmTasks as any,
       additionalConcerns,
       preparedBy: formPreparedBy,
-      preparedDesignation: formPreparedDesignation,
+      preparedByDesignation: formPreparedDesignation,
       evaluatedBy: formEvaluatedBy,
-      evaluatedDesignation: formEvaluatedDesignation,
+      evaluatedByDesignation: formEvaluatedDesignation,
       evaluatedDate: formEvaluatedDate,
     };
     
@@ -390,9 +390,9 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
     setFormWeeks(log.weeks || []);
     setAdditionalConcerns(log.additionalConcerns || '');
     setFormPreparedBy(log.preparedBy || '');
-    setFormPreparedDesignation(log.preparedDesignation || '');
+    setFormPreparedDesignation(log.preparedByDesignation || '');
     setFormEvaluatedBy(log.evaluatedBy || '');
-    setFormEvaluatedDesignation(log.evaluatedDesignation || '');
+    setFormEvaluatedDesignation(log.evaluatedByDesignation || '');
     setFormEvaluatedDate(log.evaluatedDate || new Date().toISOString().split('T')[0]);
     setViewTab('pm');
   };

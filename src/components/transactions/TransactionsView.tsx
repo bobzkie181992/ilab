@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import { useAppContext } from '../../context/AppContext';
 import { Card, CardContent } from '../ui/Card';
 import { Badge } from '../ui/Badge';
-import { Clock, CheckCircle2, Package, Loader2, Calendar, Wrench, UserCheck, Search, Building2 } from 'lucide-react';
+import { Clock, CheckCircle2, Package, Loader2, Calendar, Wrench, UserCheck, Search, Building2, Printer } from 'lucide-react';
+import { TransactionReceipt } from './TransactionReceipt';
+import { BorrowTransaction } from '../../types';
 
 export const TransactionsView: React.FC = () => {
-  const { state, approveTransaction, releaseEquipment } = useAppContext();
+  const { state, approveTransaction, releaseEquipment, completeBooking } = useAppContext();
   const [logTab, setLogTab] = useState<'borrow' | 'facility' | 'eq_maint' | 'pm_maint' | 'ojt'>('borrow');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTx, setSelectedTx] = useState<BorrowTransaction | null>(null);
   const currentUser = state.currentUser;
   
   const isAdminOrStaff = currentUser?.role === 'Admin' || currentUser?.position === 'Lab-Incharge' || currentUser?.position === 'Dean';
@@ -19,9 +22,9 @@ export const TransactionsView: React.FC = () => {
       const borrower = state.users.find(u => u.id === tx.borrowerId);
       const eq = state.equipment.find(e => e.id === tx.equipmentId);
       const matchesSearch = !searchQuery || 
-        borrower?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        eq?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        eq?.qrCode.toLowerCase().includes(searchQuery.toLowerCase());
+        (borrower?.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
+        (eq?.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
+        (eq?.qrCode?.toLowerCase() || '').includes(searchQuery.toLowerCase());
       const hasPermission = isAdminOrStaff || tx.borrowerId === currentUser?.id;
       return matchesSearch && hasPermission;
     });
@@ -36,6 +39,7 @@ export const TransactionsView: React.FC = () => {
       const isPendingApproval = tx.status === 'Pending Approval';
       const isApprovedLab = tx.status === 'Approved by Lab-Incharge';
       const isApprovedDean = tx.status === 'Approved by Dean';
+      const isQueued = tx.status === 'Queued';
 
       const isLabIncharge = currentUser?.position === 'Lab-Incharge' || currentUser?.role === 'Admin';
       const isDean = currentUser?.position === 'Dean' || currentUser?.role === 'Admin';
@@ -96,6 +100,7 @@ export const TransactionsView: React.FC = () => {
                 {isPendingApproval && <Badge className="bg-amber-100 text-amber-700 border-amber-200"><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Pending Lab Approval</Badge>}
                 {isApprovedLab && <Badge className="bg-amber-100 text-amber-700 border-amber-200"><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Pending Dean Approval</Badge>}
                 {isApprovedDean && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200"><CheckCircle2 className="mr-1 h-3 w-3" /> Approved: Ready for Release</Badge>}
+                {isQueued && <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">Queued</Badge>}
                 
                 {canApproveLab && (
                   <button onClick={() => approveTransaction(tx.id, 'Lab-Incharge')} className="bg-brand text-white px-3 py-1 rounded text-xs font-bold hover:bg-brand/90 transition-all">Approve (Lab-Incharge)</button>
@@ -106,6 +111,21 @@ export const TransactionsView: React.FC = () => {
                 {canRelease && (
                   <button onClick={() => releaseEquipment(tx.id)} className="bg-emerald-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-emerald-700 transition-all">Release Equipment</button>
                 )}
+                <button 
+                  onClick={() => setSelectedTx(tx)}
+                  className="flex items-center space-x-1 px-3 py-1 rounded text-xs font-bold bg-white text-slate-700 hover:bg-slate-50 transition-all border border-slate-200"
+                  title="View Details"
+                >
+                  <span>Details</span>
+                </button>
+                <button 
+                  onClick={() => setSelectedTx(tx)}
+                  className="flex items-center space-x-1 px-3 py-1 rounded text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all"
+                  title="Print Receipt"
+                >
+                  <Printer className="h-3 w-3" />
+                  <span>Print</span>
+                </button>
               </div>
             </div>
           </CardContent>
@@ -121,8 +141,8 @@ export const TransactionsView: React.FC = () => {
       const facility = state.facilities.find(f => f.id === bk.facilityId);
       const user = state.users.find(u => u.id === bk.userId);
       const matchesSearch = !searchQuery || 
-        facility?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        user?.name.toLowerCase().includes(searchQuery.toLowerCase());
+        (facility?.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
+        (user?.name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
       const hasPermission = isAdminOrStaff || bk.userId === currentUser?.id;
       return matchesSearch && hasPermission;
     });
@@ -153,13 +173,25 @@ export const TransactionsView: React.FC = () => {
               <p className="text-xs text-slate-500 mt-1 italic">"{bk.purpose}"</p>
             </div>
             <div className="flex flex-col sm:items-end space-y-2">
-              <div className="text-xs text-slate-600">
-                <p className="font-bold">{new Date(bk.startTime).toLocaleDateString()}</p>
-                <p>{new Date(bk.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {new Date(bk.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p>
+              <div className="flex items-center space-x-2">
+                {isAdminOrStaff && bk.status === 'Confirmed' && (
+                  <button 
+                    onClick={() => completeBooking(bk.id)}
+                    className="flex items-center space-x-1 px-3 py-1 rounded text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-all"
+                  >
+                    <CheckCircle2 className="h-3 w-3" />
+                    <span>Complete</span>
+                  </button>
+                )}
+                <div className="text-right text-xs text-slate-600">
+                  <p className="font-bold">{new Date(bk.startTime).toLocaleDateString()}</p>
+                  <p>{new Date(bk.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {new Date(bk.endTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p>
+                </div>
               </div>
               <Badge className={
                 bk.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
                 bk.status === 'Pending Approval' ? 'bg-amber-100 text-amber-700' :
+                bk.status === 'Queued' ? 'bg-indigo-100 text-indigo-700' :
                 bk.status === 'Rejected' ? 'bg-red-100 text-red-700' :
                 'bg-slate-100 text-slate-700'
               }>
@@ -178,8 +210,8 @@ export const TransactionsView: React.FC = () => {
     ).filter(tk => {
       const eq = state.equipment.find(e => e.id === tk.equipmentId);
       const matchesSearch = !searchQuery || 
-        eq?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        tk.title.toLowerCase().includes(searchQuery.toLowerCase());
+        (eq?.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
+        (tk.title?.toLowerCase() || '').includes(searchQuery.toLowerCase());
       return matchesSearch;
     });
 
@@ -225,8 +257,8 @@ export const TransactionsView: React.FC = () => {
       new Date(b.date).getTime() - new Date(a.date).getTime()
     ).filter(log => {
       const matchesSearch = !searchQuery || 
-        log.lab.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        log.preparedBy.toLowerCase().includes(searchQuery.toLowerCase());
+        (log.lab?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
+        (log.preparedBy?.toLowerCase() || '').includes(searchQuery.toLowerCase());
       return matchesSearch;
     });
 
@@ -257,8 +289,8 @@ export const TransactionsView: React.FC = () => {
     ).filter(log => {
       const user = state.users.find(u => u.id === log.userId);
       const matchesSearch = !searchQuery || 
-        user?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        user?.idNumber.includes(searchQuery);
+        (user?.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
+        (user?.idNumber?.toLowerCase() || '').includes(searchQuery.toLowerCase());
       const hasPermission = isAdminOrStaff || log.userId === currentUser?.id;
       return matchesSearch && hasPermission;
     });
@@ -346,6 +378,15 @@ export const TransactionsView: React.FC = () => {
         {logTab === 'pm_maint' && renderPmMaintLogs()}
         {logTab === 'ojt' && renderOjtLogs()}
       </div>
+
+      {selectedTx && (
+        <TransactionReceipt 
+          transaction={selectedTx}
+          equipment={state.equipment.find(e => e.id === selectedTx.equipmentId)}
+          borrower={state.users.find(u => u.id === selectedTx.borrowerId)}
+          onClose={() => setSelectedTx(null)}
+        />
+      )}
     </div>
   );
 };

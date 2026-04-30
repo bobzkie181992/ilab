@@ -32,6 +32,7 @@ export function StatusBadge({ status }: { status: EquipmentStatus }) {
     Offline: { variant: 'secondary', label: 'Offline' },
     Lost: { variant: 'destructive', label: 'Lost' },
     Reserved: { variant: 'warning', label: 'Reserved' },
+    Queued: { variant: 'secondary', label: 'Queued' },
   };
 
   const { variant, label } = statusConfig[status] || { variant: 'default', label: status };

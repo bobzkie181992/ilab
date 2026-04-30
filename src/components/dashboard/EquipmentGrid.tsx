@@ -7,7 +7,7 @@ import { Equipment } from '../../types';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 
 const EquipmentIconTemplate = ({ type }: { type: Equipment['type'] }) => {
-  switch (type.toLowerCase()) {
+  switch ((type || '').toLowerCase()) {
     case 'laptop': return <Monitor className="h-5 w-5" />;
     case 'workstation': return <Monitor className="h-5 w-5" />;
     case 'server': return <Server className="h-5 w-5" />;

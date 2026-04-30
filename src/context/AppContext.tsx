@@ -4,10 +4,12 @@ import {
   SystemState, 
   Borrower, 
   BorrowTransaction, 
-  EquipmentCondition, 
+  EquipmentCondition,
+  EquipmentStatus,
   DEFAULT_POLICIES, 
   BorrowerRole, 
   RulePolicy,
+  SystemSettings,
   User,
   UserPosition,
   Facility,
@@ -17,8 +19,9 @@ import {
   TicketPriority,
   MaintenanceChecklist,
   MaintenanceLog,
-  OjtAttendance,
-  AttendanceSchedule
+  SoftwareRequest,
+  SoftwareRequestStatus,
+  Notification
 } from '../types';
 
 const MOCK_USERS: User[] = [];
@@ -57,6 +60,7 @@ interface AppContextType {
   addBooking: (booking: Omit<FacilityBooking, 'id' | 'status'>) => TransactionResult;
   approveBooking: (bookingId: string) => void;
   rejectBooking: (bookingId: string) => void;
+  completeBooking: (bookingId: string) => void;
   cancelBooking: (id: string) => void;
   // Maintenance
   createTicket: (ticket: Omit<MaintenanceTicket, 'id' | 'status' | 'createdAt' | 'updatedAt'>) => void;
@@ -66,17 +70,18 @@ interface AppContextType {
   addMaintenanceLog: (log: MaintenanceLog | Omit<MaintenanceLog, 'id'>) => void;
   updateMaintenanceLog: (id: string, updates: Partial<MaintenanceLog>) => void;
   deleteMaintenanceLog: (id: string) => void;
+  
+  createSoftwareRequest: (formData: FormData) => Promise<{ success: boolean; message: string }>;
+  updateSoftwareRequestStatus: (id: string, status: SoftwareRequestStatus) => void;
+
   // Approvals
-  approveTransaction: (txId: string, step: 'Lab-Incharge' | 'Dean') => void;
+  approveTransaction: (txId: string, step: 'Lab-Incharge' | 'Dean' | 'Admin') => void;
   releaseEquipment: (txId: string) => void;
+  walkInCheckout: (equipmentQrs: string[], borrowerId: string, startTime?: string, expectedReturnTime?: string, purpose?: string) => TransactionResult;
   resetSystem: () => void;
+  updateSettings: (settings: Partial<SystemSettings>) => void;
   // Notifications
   markNotificationAsRead: (id: string) => void;
-  // OJT Features
-  logAttendance: (userId: string) => TransactionResult;
-  updateAttendanceSchedule: (attendanceSchedule: AttendanceSchedule) => void;
-  updateOjtStatus: (userId: string, isOJT: boolean) => void;
-  registerFace: (userId: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -92,15 +97,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     bookings: [],
     maintenanceTickets: [],
     maintenanceLogs: [],
-    policies: DEFAULT_POLICIES,
     attendanceLogs: [],
-    attendanceSchedule: {
-      amIn: '08:00',
-      amOut: '12:00',
-      pmIn: '13:00',
-      pmOut: '17:00'
-    },
+    softwareRequests: [],
+    policies: DEFAULT_POLICIES,
     notifications: [],
+    settings: {
+      labName: 'CCIS Main Laboratory',
+      adminEmail: 'admin@ccis.edu',
+      logoUrl: 'https://storage.googleapis.com/ar-auth-artifacts.appspot.com/artifacts/a895c141-8fec-4fa1-8ca6-0b8108420b92/attachments/3a29db70-a3da-4767-873b-ebccff5d414a/ccis_logo.png',
+      overdueAlerts: true,
+      adminEscalation: true
+    }
   });
 
   // Initialization & Data Sync
@@ -115,8 +122,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           bkRes,
           tkRes,
           logsRes,
-          attRes,
-          schedRes
+          attnRes,
+          srRes,
+          settingsRes,
         ] = await Promise.all([
           fetch('/api/users'),
           fetch('/api/equipment'),
@@ -125,8 +133,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           fetch('/api/bookings'),
           fetch('/api/maintenance-tickets'),
           fetch('/api/pm-logs'),
-          fetch('/api/attendance'),
-          fetch('/api/schedule')
+          fetch('/api/attendance-logs'),
+          fetch('/api/software-requests'),
+          fetch('/api/settings'),
+          fetch('/api/notifications'),
         ]);
 
         const [
@@ -138,7 +148,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           maintenanceTickets,
           maintenanceLogs,
           attendanceLogs,
-          schedules
+          softwareRequests,
+          settings,
+          notifications,
         ] = await Promise.all([
           usersRes.json(),
           eqRes.json(),
@@ -147,11 +159,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           bkRes.json(),
           tkRes.json(),
           logsRes.json(),
-          attRes.json(),
-          schedRes.json()
+          attnRes.json(),
+          srRes.json(),
+          settingsRes.json(),
+          (await fetch('/api/notifications')).json(), // Direct fetch for simplicity in Promise.all mapping if I missed one earlier
         ]);
-
-        const schedule = schedules.find((s: any) => s.id === 'default') || state.attendanceSchedule;
 
         setState(prev => ({
           ...prev,
@@ -163,7 +175,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           maintenanceTickets,
           maintenanceLogs,
           attendanceLogs,
-          attendanceSchedule: schedule
+          softwareRequests,
+          notifications,
+          settings: settings || prev.settings
         }));
       } catch (error) {
         console.error('Failed to sync with database:', error);
@@ -173,24 +187,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     fetchData();
   }, []);
 
-  const addNotification = (userId: string, message: string) => {
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = new Date().getTime();
+      let hasUpdates = false;
+      const updatedBookings = state.bookings.map(b => {
+        if (b.status === 'Confirmed') {
+          const end = new Date(b.endTime).getTime();
+          if (now >= end) {
+            hasUpdates = true;
+            const updated = { ...b, status: 'Completed' as const };
+            fetch(`/api/bookings/${b.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(updated)
+            }).then(() => {
+              promoteNextInQueue(b.facilityId);
+            }).catch(e => console.error(e));
+            return updated;
+          }
+        }
+        return b;
+      });
+
+      if (hasUpdates) {
+        setState(prev => ({ ...prev, bookings: updatedBookings }));
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(timer);
+  }, [state.bookings]);
+
+  const addNotification = (userId: string, title: string, message: string, type: Notification['type'] = 'Info', targetView?: string) => {
+    const newNotif: Notification = {
+      id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      userId,
+      title,
+      message,
+      type,
+      read: false,
+      createdAt: new Date().toISOString(),
+      targetView
+    };
+
+    fetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newNotif)
+    });
+
     setState(prev => ({
       ...prev,
-      notifications: [...prev.notifications, {
-        id: `notif-${Date.now()}`,
-        userId,
-        message,
-        createdAt: new Date().toISOString(),
-        read: false,
-      }]
+      notifications: [newNotif, ...prev.notifications]
     }));
   };
 
   const markNotificationAsRead = (id: string) => {
+    fetch(`/api/notifications/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ read: true })
+    });
+
     setState(prev => ({
       ...prev,
       notifications: prev.notifications.map(n => n.id === id ? { ...n, read: true } : n)
     }));
+  };
+
+  const notifyApprovers = (title: string, message: string, targetView?: string) => {
+    const approvers = state.users.filter(u => 
+      u.role === 'Admin' || u.position === 'Dean' || u.position === 'Lab-Incharge'
+    );
+    approvers.forEach(appr => {
+      addNotification(appr.id, title, message, 'Info', targetView);
+    });
   };
 
   const login = (identifier: string, password: string) => {
@@ -244,14 +315,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return (startTime < bEnd && endTime > bStart);
     });
 
-    if (hasConflict) {
-      return { success: false, message: 'Conflict: This facility is already booked for the selected time.' };
-    }
-
     const newBooking: FacilityBooking = {
       ...bookingData,
       id: `bk-${Date.now()}`,
-      status: 'Pending Approval'
+      status: hasConflict ? 'Queued' : 'Pending Approval'
     };
 
     fetch('/api/bookings', {
@@ -268,10 +335,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Notifications to Deans
     const deans = state.users.filter(u => u.position === 'Dean');
     deans.forEach(dean => {
-      addNotification(dean.id, `Approval needed for facility booking request: Facility ID ${bookingData.facilityId} by User ID ${bookingData.userId}`);
+      addNotification(dean.id, hasConflict ? 'New Queued Booking Request' : 'New Facility Booking', `Approval needed for facility booking request: Facility ID ${bookingData.facilityId} by User ID ${bookingData.userId}`, 'Info', 'facility');
     });
 
-    return { success: true, message: 'Reservation request submitted for Dean approval.' };
+    return { success: true, message: hasConflict ? 'Facility is currently booked or pending for the selected time. You have been added to the queue.' : 'Reservation request submitted for Dean approval.' };
+  };
+
+  const promoteNextInQueue = (facilityId: string) => {
+    // Find queued bookings for this facility, sort by creation (assuming id has timestamp)
+    const queuedBookings = state.bookings.filter(b => b.facilityId === facilityId && b.status === 'Queued')
+                                         .sort((a, b) => {
+                                           const timeA = parseInt(a.id.split('-')[1] || '0');
+                                           const timeB = parseInt(b.id.split('-')[1] || '0');
+                                           return timeA - timeB;
+                                         });
+    
+    for (const qBooking of queuedBookings) {
+      // Check if it still has conflicts
+      const startTime = new Date(qBooking.startTime).getTime();
+      const endTime = new Date(qBooking.endTime).getTime();
+      
+      const hasConflict = state.bookings.some(b => {
+        if (b.id === qBooking.id || b.facilityId !== facilityId || (b.status !== 'Confirmed' && b.status !== 'Pending Approval')) return false;
+        const bStart = new Date(b.startTime).getTime();
+        const bEnd = new Date(b.endTime).getTime();
+        return (startTime < bEnd && endTime > bStart);
+      });
+
+      if (!hasConflict) {
+        // Promote to Pending Approval
+        const updated = { ...qBooking, status: 'Pending Approval' as const };
+        fetch(`/api/bookings/${qBooking.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated)
+        });
+        setState(prev => ({
+          ...prev,
+          bookings: prev.bookings.map(b => b.id === qBooking.id ? updated : b)
+        }));
+        
+        // Notify Dean
+        const deans = state.users.filter(u => u.position === 'Dean');
+        deans.forEach(dean => {
+          addNotification(dean.id, 'Queued Booking Promoted', `A queued booking for Facility ID ${facilityId} is now pending approval.`, 'Info', 'facility');
+        });
+        break; // Promote one at a time for safety
+      }
+    }
   };
 
   const approveBooking = (id: string) => {
@@ -303,15 +414,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...prev,
         bookings: prev.bookings.map(b => b.id === id ? updated : b)
       }));
+      setTimeout(() => promoteNextInQueue(booking.facilityId), 100);
+    }
+  };
+
+  const completeBooking = (id: string) => {
+    const booking = state.bookings.find(b => b.id === id);
+    if (booking) {
+      const updated = { ...booking, status: 'Completed' as const };
+      fetch(`/api/bookings/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      setState(prev => ({
+        ...prev,
+        bookings: prev.bookings.map(b => b.id === id ? updated : b)
+      }));
+      setTimeout(() => promoteNextInQueue(booking.facilityId), 100);
     }
   };
 
   const cancelBooking = (id: string) => {
+    const booking = state.bookings.find(b => b.id === id);
     fetch(`/api/bookings/${id}`, { method: 'DELETE' });
     setState(prev => ({
       ...prev,
       bookings: prev.bookings.filter(b => b.id !== id)
     }));
+    if (booking) {
+      setTimeout(() => promoteNextInQueue(booking.facilityId), 100);
+    }
   };
 
   const createTicket = (ticketData: Omit<MaintenanceTicket, 'id' | 'status' | 'createdAt' | 'updatedAt'>) => {
@@ -349,6 +482,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         maintenanceTickets: [...prev.maintenanceTickets, newTicket]
       }));
     }
+    notifyApprovers('New Maintenance Ticket', `A new maintenance ticket has been created for ${state.equipment.find(e => e.id === ticketData.equipmentId)?.name || 'Unknown Item'}.`, 'maintenance');
   };
 
   const updateTicketStatus = (id: string, status: TicketStatus) => {
@@ -460,8 +594,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const equipmentItems = equipmentQrs.map(qr => state.equipment.find(e => e.qrCode === qr));
-    if (equipmentItems.some(eq => !eq || eq.status !== 'Available')) {
-        return { success: false, message: 'One or more items are not available.' };
+    if (equipmentItems.some(eq => !eq || eq.status === 'Offline' || eq.status === 'Lost')) {
+        return { success: false, message: 'One or more items are Offline or Lost.' };
     }
 
     const now = startTime ? new Date(startTime) : new Date();
@@ -475,7 +609,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       expectedReturn = new Date(now.getTime() + ms);
     }
 
+    let anyQueued = false;
+    const suggestions: string[] = [];
+
     equipmentItems.forEach((eq, index) => {
+      const conflictingTxs = state.transactions.filter(tx => {
+        if (tx.equipmentId !== eq!.id || !['Pending Approval', 'Approved by Lab-Incharge', 'Approved by Dean', 'Released', 'Active', 'Overdue'].includes(tx.status)) return false;
+        const txStart = new Date(tx.checkoutTime).getTime();
+        const txEnd = new Date(tx.expectedReturnTime).getTime();
+        return (now.getTime() < txEnd && expectedReturn.getTime() > txStart);
+      });
+      const hasConflict = conflictingTxs.length > 0;
+
+      if (hasConflict) {
+        anyQueued = true;
+        const latestConflictingEnd = Math.max(...conflictingTxs.map(tx => new Date(tx.expectedReturnTime).getTime()));
+        suggestions.push(`${eq!.name} is available after ${new Date(latestConflictingEnd).toLocaleString()}`);
+      }
+
       const newTx: BorrowTransaction = {
         id: `tx-${Date.now()}-${index}`,
         equipmentId: eq!.id,
@@ -484,7 +635,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         checkoutTime: now.toISOString(),
         expectedReturnTime: expectedReturn.toISOString(),
         checkoutCondition: eq!.condition,
-        status: 'Pending Approval',
+        status: hasConflict ? 'Queued' : 'Pending Approval',
         purpose: purpose || 'None'
       };
 
@@ -494,21 +645,130 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify(newTx)
       });
 
-      const updatedEq = { ...eq!, status: 'Reserved' as const };
-      fetch(`/api/equipment/${eq!.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedEq)
-      });
+      let updatedEq = eq!;
+      if (hasConflict) {
+        updatedEq = { ...eq!, status: 'Queued' as const };
+        fetch(`/api/equipment/${eq!.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedEq)
+        });
+      } else if (eq!.status !== 'Reserved') {
+        updatedEq = { ...eq!, status: 'Reserved' as const };
+        fetch(`/api/equipment/${eq!.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedEq)
+        });
+      }
 
       setState(prev => ({
         ...prev,
         transactions: [...prev.transactions, newTx],
         equipment: prev.equipment.map(e => e.id === eq!.id ? updatedEq : e)
       }));
+
+      notifyApprovers(
+        hasConflict ? 'New Queued Equipment Request' : 'New Equipment Request',
+        `${borrower.name} has ${hasConflict ? 'queued for' : 'requested'} ${eq!.name}.`,
+        'transactions'
+      );
+
+      if (hasConflict) {
+        addNotification(borrower.id, 'Equipment Unavailable', `The equipment ${eq!.name} is reserved/queued for the selected time, so you have been added to the queue.`, 'Warning', 'transactions');
+      }
     });
 
-    return { success: true, message: `Borrow request submitted for ${borrower.name}.` };
+    return { success: true, message: anyQueued ? `Some items are unavailable. Suggestions: ${suggestions.join(' | ')}` : `Borrow request submitted for ${borrower.name}.` };
+  };
+
+  const walkInCheckout = (equipmentQrs: string[], borrowerId: string, startTime?: string, expectedReturnTime?: string, purpose?: string): TransactionResult => {
+    const borrower = state.users.find(b => b.id === borrowerId);
+    if (!borrower) return { success: false, message: 'Borrower not found.' };
+    
+    const rules = state.policies[borrower.role as BorrowerRole] || DEFAULT_POLICIES[borrower.role as BorrowerRole];
+    const equipmentItems = equipmentQrs.map(qr => state.equipment.find(e => e.qrCode === qr));
+    
+    if (equipmentItems.some(eq => !eq || eq.status === 'Offline' || eq.status === 'Lost')) {
+      return { success: false, message: 'One or more items are Offline or Lost.' };
+    }
+
+    const now = startTime ? new Date(startTime) : new Date();
+    let expectedReturn: Date;
+    if (expectedReturnTime) {
+      expectedReturn = new Date(expectedReturnTime);
+    } else {
+      let ms = rules.maxDurationValue * 3600000;
+      if (rules.maxDurationUnit === 'Days') ms = rules.maxDurationValue * 24 * 3600000;
+      else if (rules.maxDurationUnit === 'Weeks') ms = rules.maxDurationValue * 7 * 24 * 3600000;
+      expectedReturn = new Date(now.getTime() + ms);
+    }
+
+    let anyQueued = false;
+
+    equipmentItems.forEach((eq, index) => {
+      const hasConflict = state.transactions.some(tx => {
+        if (tx.equipmentId !== eq!.id || !['Pending Approval', 'Approved by Lab-Incharge', 'Approved by Dean', 'Released', 'Active', 'Overdue'].includes(tx.status)) return false;
+        const txStart = new Date(tx.checkoutTime).getTime();
+        const txEnd = new Date(tx.expectedReturnTime).getTime();
+        return (now.getTime() < txEnd && expectedReturn.getTime() > txStart);
+      });
+
+      if (hasConflict) anyQueued = true;
+
+      const newTx: BorrowTransaction = {
+        id: `tx-walkin-${Date.now()}-${index}`,
+        equipmentId: eq!.id,
+        borrowerId: borrower.id,
+        borrowerRole: borrower.role,
+        checkoutTime: now.toISOString(),
+        expectedReturnTime: expectedReturn.toISOString(),
+        checkoutCondition: eq!.condition,
+        status: hasConflict ? 'Queued' : 'Pending Approval',
+        purpose: purpose || 'Walk-in Borrowing'
+      };
+
+      fetch('/api/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTx)
+      });
+
+      let updatedEq = eq!;
+      if (hasConflict) {
+        updatedEq = { ...eq!, status: 'Queued' as const };
+        fetch(`/api/equipment/${eq!.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedEq)
+        });
+      } else if (eq!.status !== 'Reserved') {
+        updatedEq = { ...eq!, status: 'Reserved' as const };
+        fetch(`/api/equipment/${eq!.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedEq)
+        });
+      }
+
+      setState(prev => ({
+        ...prev,
+        transactions: [...prev.transactions, newTx],
+        equipment: prev.equipment.map(e => e.id === eq!.id ? updatedEq : e)
+      }));
+
+      notifyApprovers(
+        hasConflict ? 'New Queued Walk-in Request' : 'New Walk-in Request',
+        `${borrower.name} has ${hasConflict ? 'queued for' : 'a walk-in request for'} ${eq!.name}.`,
+        'transactions'
+      );
+
+      if (hasConflict) {
+        addNotification(borrower.id, 'Equipment Unavailable', `The equipment ${eq!.name} is reserved/queued for the selected time, so you have been added to the queue.`, 'Warning', 'transactions');
+      }
+    });
+
+    return { success: true, message: anyQueued ? 'Some items are currently unavailable. You have been added to the queue.' : `Walk-in borrow request submitted for ${borrower.name}. Pending approval from Lab Incharge and Dean.` };
   };
 
   const returnEquipment = (equipmentQr: string, condition: EquipmentCondition, notes?: string): TransactionResult => {
@@ -535,20 +795,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       body: JSON.stringify(updatedTx)
     });
 
-    const updatedEq = { ...eq, status: nextEqStatus, condition };
+    const nextQueuedTx = state.transactions
+      .filter(t => t.equipmentId === eq.id && t.status === 'Queued')
+      .sort((a, b) => new Date(a.checkoutTime).getTime() - new Date(b.checkoutTime).getTime())[0];
+
+    let finalEqStatus: EquipmentStatus = nextEqStatus;
+    let updatedQueuedTx: BorrowTransaction | undefined;
+
+    if (nextQueuedTx && nextEqStatus === 'Available') {
+      finalEqStatus = 'Reserved';
+      updatedQueuedTx = { ...nextQueuedTx, status: 'Pending Approval' as const };
+      
+      fetch(`/api/transactions/${nextQueuedTx.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedQueuedTx)
+      });
+      
+      notifyApprovers(
+        'Queued Equipment Ready',
+        `Equipment ${eq.name} has been returned and a queued request is now pending approval.`,
+        'transactions'
+      );
+    }
+
+    const updatedEq = { ...eq, status: finalEqStatus, condition };
     fetch(`/api/equipment/${eq.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedEq)
     });
 
-    setState(prev => ({
-      ...prev,
-      transactions: prev.transactions.map(t => t.id === activeTx.id ? updatedTx : t),
-      equipment: prev.equipment.map(e => e.id === eq.id ? updatedEq : e)
-    }));
+    setState(prev => {
+      let nextTx = prev.transactions.map(t => t.id === activeTx.id ? updatedTx : t);
+      if (updatedQueuedTx) {
+        nextTx = nextTx.map(t => t.id === updatedQueuedTx!.id ? updatedQueuedTx! : t);
+      }
+      return {
+        ...prev,
+        transactions: nextTx,
+        equipment: prev.equipment.map(e => e.id === eq.id ? updatedEq : e)
+      };
+    });
 
-    return { success: true, message: `Equipment returned. Status: ${nextEqStatus}` };
+    return { success: true, message: `Equipment returned. Status: ${finalEqStatus}` };
   };
 
   const updatePolicy = (role: BorrowerRole, policy: Partial<RulePolicy>) => {
@@ -663,12 +953,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateUser(userId, { position: position as any });
   };
 
-  const approveTransaction = (txId: string, step: 'Lab-Incharge' | 'Dean') => {
+  const approveTransaction = (txId: string, step: 'Lab-Incharge' | 'Dean' | 'Admin') => {
     const tx = state.transactions.find(t => t.id === txId);
     if (tx) {
       let status = tx.status;
       if (step === 'Lab-Incharge' && tx.status === 'Pending Approval') status = 'Approved by Lab-Incharge';
       if (step === 'Dean' && tx.status === 'Approved by Lab-Incharge') status = 'Approved by Dean';
+      if (step === 'Admin' && tx.status === 'Approved by Dean') status = 'Approved by Admin';
       
       const updated = { ...tx, status };
       fetch(`/api/transactions/${txId}`, {
@@ -680,6 +971,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...prev,
         transactions: prev.transactions.map(t => t.id === txId ? updated : t)
       }));
+
+      if (status === 'Approved by Lab-Incharge') {
+        notifyApprovers(
+          'Request Approved by Lab Incharge',
+          `Equipment request ${txId} has been approved by the Lab Incharge. Pending Dean approval.`,
+          'transactions'
+        );
+      } else if (status === 'Approved by Dean') {
+        notifyApprovers(
+          'Request Approved by Dean',
+          `Equipment request ${txId} has been approved by the Dean. Pending Admin approval.`,
+          'transactions'
+        );
+      } else if (status === 'Approved by Admin') {
+        notifyApprovers(
+          'Request Fully Approved',
+          `Equipment request ${txId} has been fully approved by the Admin. Ready for release.`,
+          'transactions'
+        );
+        addNotification(tx.borrowerId, 'Request Approved', `Your request for ${state.equipment.find(e => e.id === tx.equipmentId)?.name} has been fully approved by the Admin.`, 'Success', 'transactions');
+      }
     }
   };
 
@@ -710,70 +1022,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const logAttendance = (userId: string): { success: boolean, message: string } => {
-    const now = new Date();
-    const nowStr = now.toISOString();
-    const today = nowStr.split('T')[0];
-    const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-    
-    const sched = state.attendanceSchedule;
-    let type: 'Time In' | 'Time Out' = 'Time In';
-    let shift: 'AM' | 'PM' = 'AM';
-    let status: 'Present' | 'Late' | 'Undertime' = 'Present';
+  const createSoftwareRequest = async (formData: FormData): Promise<{ success: boolean; message: string }> => {
+    formData.append('id', `sr-${Date.now()}`);
+    formData.append('facultyId', state.currentUser!.id);
+    formData.append('status', 'Pending');
+    formData.append('createdAt', new Date().toISOString());
+    formData.append('updatedAt', new Date().toISOString());
 
-    if (time >= '06:00' && time <= '10:00') {
-      type = 'Time In'; shift = 'AM';
-      if (time > sched.amIn) status = 'Late';
-    } else if (time > '10:00' && time <= '12:30') {
-      type = 'Time Out'; shift = 'AM';
-      if (time < sched.amOut) status = 'Undertime';
-    } else if (time > '12:30' && time <= '14:30') {
-      type = 'Time In'; shift = 'PM';
-      if (time > sched.pmIn) status = 'Late';
-    } else {
-      type = 'Time Out'; shift = 'PM';
-      if (time < sched.pmOut) status = 'Undertime';
+    try {
+      const res = await fetch('/api/software-requests', {
+        method: 'POST',
+        body: formData // multer handles multipart/form-data
+      });
+      const json = await res.json();
+      if (json.success) {
+        setState(prev => ({ ...prev, softwareRequests: [...prev.softwareRequests, json.data] }));
+        notifyApprovers('New Software Request', `${state.currentUser?.name} has requested a new software installation: ${json.data.softwareName}`, 'software');
+        return { success: true, message: 'Software installation request submitted' };
+      }
+      return { success: false, message: 'Failed to submit software request' };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Error uploading request' };
     }
-
-    const newLog: OjtAttendance = {
-      id: `att-${Date.now()}`,
-      userId,
-      date: today,
-      timestamp: nowStr,
-      type,
-      shift,
-      status
-    };
-
-    fetch('/api/attendance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newLog)
-    });
-
-    setState(prev => ({
-      ...prev,
-      attendanceLogs: [...prev.attendanceLogs, newLog]
-    }));
-
-    return { success: true, message: `Successfully logged ${type} (${shift}) as ${status}` };
   };
 
-  const updateAttendanceSchedule = (schedule: AttendanceSchedule) => {
-    fetch('/api/schedule/default', {
+  const updateSoftwareRequestStatus = (id: string, status: SoftwareRequestStatus) => {
+    fetch(`/api/software-requests/${id}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(schedule)
+      body: JSON.stringify({ status })
     });
-    setState(prev => ({ ...prev, attendanceSchedule: schedule }));
+    setState(prev => ({
+      ...prev,
+      softwareRequests: prev.softwareRequests.map(sr => sr.id === id ? { ...sr, status, updatedAt: new Date().toISOString() } : sr)
+    }));
   };
 
-  const updateOjtStatus = (userId: string, isOJT: boolean) => {
-    updateUser(userId, { isOJT });
-  };
-
-  const registerFace = (userId: string) => {
-    updateUser(userId, { faceRegistered: true });
+  const updateSettings = (updates: Partial<SystemSettings>) => {
+    const newSettings = { ...state.settings, ...updates };
+    fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newSettings)
+    });
+    setState(prev => ({ ...prev, settings: newSettings }));
   };
 
   const toggleSystemMode = () => {
@@ -811,6 +1103,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addBooking,
       approveBooking,
       rejectBooking,
+      completeBooking,
       cancelBooking,
       createTicket,
       updateTicketStatus,
@@ -821,11 +1114,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deleteMaintenanceLog,
       approveTransaction,
       releaseEquipment,
-      logAttendance,
-      updateAttendanceSchedule,
-      updateOjtStatus,
-      registerFace,
+      walkInCheckout,
+      createSoftwareRequest,
+      updateSoftwareRequestStatus,
       resetSystem,
+      updateSettings,
       markNotificationAsRead
     }}>
       {children}

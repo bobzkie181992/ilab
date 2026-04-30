@@ -8,9 +8,35 @@ import { toast } from 'sonner';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 
 export const SettingsView: React.FC = () => {
-  const { state, updatePolicy, clearTransactions, updateUser, changePassword, resetSystem, updateOjtStatus, registerFace } = useAppContext();
+  const { state, updatePolicy, clearTransactions, updateUser, changePassword, resetSystem, registerFace, updateSettings } = useAppContext();
   const { currentUser } = state;
   
+  const [isDataMgmtAuthenticated, setIsDataMgmtAuthenticated] = useState(false);
+  const [isDataMgmtAuthModalOpen, setIsDataMgmtAuthModalOpen] = useState(false);
+  const [dataMgmtAuthPassword, setDataMgmtAuthPassword] = useState('');
+  const [dataMgmtAuthError, setDataMgmtAuthError] = useState('');
+
+  const handleTabClick = (tabId: string) => {
+    if (tabId === 'data' && !isDataMgmtAuthenticated) {
+      setIsDataMgmtAuthModalOpen(true);
+      setDataMgmtAuthError('');
+      setDataMgmtAuthPassword('');
+    } else {
+      setActiveTab(tabId as any);
+    }
+  };
+
+  const handleDataMgmtAuthSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (currentUser?.password === dataMgmtAuthPassword) {
+      setIsDataMgmtAuthenticated(true);
+      setActiveTab('data');
+      setIsDataMgmtAuthModalOpen(false);
+    } else {
+      setDataMgmtAuthError('Incorrect password');
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<'profile' | 'policies' | 'system' | 'users' | 'data'>('profile');
   const [formData, setFormData] = useState({
     name: currentUser?.name || '',
@@ -30,7 +56,60 @@ export const SettingsView: React.FC = () => {
   const [isConfirmClearOpen, setIsConfirmClearOpen] = useState(false);
   const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
 
-  // Backup handlers
+  const [autoBackupHandle, setAutoBackupHandle] = useState<any | null>(null);
+  const [isAutoBackupEnabled, setIsAutoBackupEnabled] = useState(false);
+  const [autoBackupInterval, setAutoBackupInterval] = useState(24);
+
+  const startAutoBackup = async () => {
+    try {
+      if (!(window as any).showDirectoryPicker) {
+        toast.error('Your browser does not support local directory selection.');
+        return;
+      }
+      const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+      setAutoBackupHandle(handle);
+      setIsAutoBackupEnabled(true);
+      toast.success('Auto-backup folder selected successfully. Keep this tab open for auto-backups.');
+      
+      // Perform first backup immediately
+      performAutoBackup(handle);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        toast.error('Failed to select backup folder: ' + err.message);
+      }
+    }
+  };
+
+  const performAutoBackup = async (handle: any) => {
+    try {
+      const res = await fetch('/api/backup/export');
+      const json = await res.json();
+      if (json.success) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `lab_monitor_backup_${timestamp}.json`;
+        const fileHandle = await handle.getFileHandle(filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(JSON.stringify(json.data, null, 2));
+        await writable.close();
+        console.log(`Auto-backed up to ${filename}`);
+      }
+    } catch (e) {
+      console.error('Auto-backup failed:', e);
+    }
+  };
+
+  // Auto-backup effect
+  React.useEffect(() => {
+    if (!isAutoBackupEnabled || !autoBackupHandle) return;
+
+    const intervalId = setInterval(() => {
+      performAutoBackup(autoBackupHandle);
+    }, autoBackupInterval * 60 * 60 * 1000);
+
+    return () => clearInterval(intervalId);
+  }, [isAutoBackupEnabled, autoBackupHandle, autoBackupInterval]);
+
+  // Existing Backup handlers
   const handleExportBackup = async () => {
     try {
       const res = await fetch('/api/backup/export');
@@ -140,7 +219,7 @@ export const SettingsView: React.FC = () => {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => handleTabClick(tab.id)}
               className={`flex items-center space-x-2 px-4 py-3 text-sm font-medium transition-all border-b-2 whitespace-nowrap ${
                 isActive 
                   ? 'border-brand text-brand bg-brand/5' 
@@ -344,7 +423,6 @@ export const SettingsView: React.FC = () => {
                       <tr>
                         <th className="px-6 py-4">User Identity</th>
                         <th className="px-6 py-4">Role</th>
-                        <th className="px-6 py-4">OJT Designation</th>
                         <th className="px-6 py-4">Biometrics</th>
                         <th className="px-6 py-4 text-right">Settings</th>
                       </tr>
@@ -373,22 +451,7 @@ export const SettingsView: React.FC = () => {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            {user.role === 'Student' ? (
-                              <button
-                                onClick={() => updateOjtStatus(user.id, !user.isOJT)}
-                                className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all border ${
-                                  user.isOJT 
-                                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200' 
-                                    : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300'
-                                }`}
-                              >
-                                <div className={`h-1.5 w-1.5 rounded-full ${user.isOJT ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
-                                <span>{user.isOJT ? 'ASSIGNED OJT' : 'NOT OJT'}</span>
-                              </button>
-                            ) : <span className="text-[10px] text-slate-300 italic">Personnel Only</span>}
-                          </td>
-                          <td className="px-6 py-4">
-                            {user.isOJT && (
+                            {user.role === 'Student' && (
                                <button 
                                  onClick={() => registerFace(user.id)}
                                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all border ${
@@ -502,23 +565,84 @@ export const SettingsView: React.FC = () => {
                   <CardTitle>Laboratory Information</CardTitle>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Lab Display Name</label>
-                    <input
-                      type="text"
-                      defaultValue="CCIS Main Laboratory"
-                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                    />
+              <CardContent className="space-y-6">
+                <div className="flex flex-col md:flex-row gap-6">
+                  <div className="flex-shrink-0 space-y-2">
+                    <label className="text-sm font-medium text-slate-700 block">Organization Logo</label>
+                    <div className="relative group">
+                      <div className="h-32 w-32 rounded-xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
+                        {state.settings.logoUrl ? (
+                          <img 
+                            src={state.settings.logoUrl} 
+                            alt="Lab Logo" 
+                            className="h-full w-full object-contain p-2"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <Database className="h-8 w-8 text-slate-300" />
+                        )}
+                      </div>
+                      <label className="absolute inset-0 flex items-center justify-center bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-xl cursor-pointer">
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Change Logo</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const formData = new FormData();
+                              formData.append('logo', file);
+                              try {
+                                const res = await fetch('/api/settings/logo', {
+                                  method: 'POST',
+                                  body: formData
+                                });
+                                const data = await res.json();
+                                if (data.success) {
+                                  updateSettings({ logoUrl: data.logoUrl });
+                                  toast.success('Logo updated successfully');
+                                }
+                              } catch (err) {
+                                toast.error('Failed to upload logo');
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <p className="text-[10px] text-slate-400">Recommended: Square PNG/SVG</p>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Administrator Email</label>
-                    <input
-                      type="email"
-                      defaultValue="admin@ccis.edu"
-                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                    />
+
+                  <div className="flex-1 space-y-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">Lab Display Name</label>
+                        <input
+                          type="text"
+                          value={state.settings.labName}
+                          onChange={(e) => updateSettings({ labName: e.target.value })}
+                          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">Administrator Email</label>
+                        <input
+                          type="email"
+                          value={state.settings.adminEmail}
+                          onChange={(e) => updateSettings({ adminEmail: e.target.value })}
+                          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                        />
+                      </div>
+                    </div>
+                    <div className="pt-2">
+                       <button 
+                         onClick={() => toast.success('Laboratory settings saved')}
+                         className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-bold shadow-sm"
+                       >
+                         Save Lab Info
+                       </button>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -535,14 +659,24 @@ export const SettingsView: React.FC = () => {
                     <div className="text-sm font-medium">Overdue Email Alerts</div>
                     <div className="text-xs text-slate-500">Send automatic reminders to borrowers</div>
                   </div>
-                  <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand" />
+                  <input 
+                    type="checkbox" 
+                    checked={state.settings.overdueAlerts} 
+                    onChange={(e) => updateSettings({ overdueAlerts: e.target.checked })}
+                    className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand" 
+                  />
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm font-medium">Admin Escalation</div>
                     <div className="text-xs text-slate-500">Notify admin after 48h overdue</div>
                   </div>
-                  <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand" />
+                  <input 
+                    type="checkbox" 
+                    checked={state.settings.adminEscalation} 
+                    onChange={(e) => updateSettings({ adminEscalation: e.target.checked })}
+                    className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand" 
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -584,15 +718,57 @@ export const SettingsView: React.FC = () => {
                     />
                   </label>
                 </div>
-                <button 
-                  onClick={() => setIsConfirmClearOpen(true)}
-                  className="w-full rounded-md border border-red-100 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors flex items-center justify-center"
-                >
-                  <ShieldCheck className="h-4 w-4 mr-2" />
-                  Clear Transaction History
-                </button>
+
+                <div className="pt-4 border-t border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">Auto Backup</p>
+                  <div className="flex flex-col space-y-3">
+                    <div className="flex items-center space-x-2">
+                       <label className="text-sm font-medium text-slate-700">Interval (hours):</label>
+                       <input 
+                         type="number" 
+                         value={autoBackupInterval}
+                         onChange={(e) => setAutoBackupInterval(Number(e.target.value) || 24)}
+                         className="w-16 rounded-md border border-slate-200 px-2 py-1 text-sm focus:border-brand focus:outline-none"
+                         min={1}
+                       />
+                    </div>
+                    {isAutoBackupEnabled ? (
+                      <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-100 rounded-lg">
+                        <div className="flex items-center space-x-2 text-emerald-700">
+                          <CheckCircle2 className="h-5 w-5" />
+                          <span className="text-sm font-medium">Auto-backup Active</span>
+                        </div>
+                        <button 
+                          onClick={() => { setIsAutoBackupEnabled(false); setAutoBackupHandle(null); }}
+                          className="text-xs font-bold text-emerald-800 hover:underline"
+                        >
+                          Stop
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={startAutoBackup}
+                        className="w-full rounded-md border border-slate-200 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors flex items-center justify-center"
+                      >
+                        <Save className="h-4 w-4 mr-2" />
+                        Browse Folder & Start Auto-Backup
+                      </button>
+                    )}
+                    <p className="text-[9px] text-slate-400 italic">
+                      Requires keeping this tab open. Select a local folder to automatically save backups.
+                    </p>
+                  </div>
+                </div>
+
                 <div className="pt-4 border-t border-slate-100">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">Advanced Maintenance</p>
+                  <button 
+                    onClick={() => setIsConfirmClearOpen(true)}
+                    className="w-full rounded-md border border-red-100 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors flex items-center justify-center mb-3"
+                  >
+                    <ShieldCheck className="h-4 w-4 mr-2" />
+                    Clear Transaction History
+                  </button>
                   <button 
                     onClick={() => setIsConfirmResetOpen(true)}
                     className="w-full rounded-md bg-rose-50 border border-rose-200 py-2.5 text-sm font-bold text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center shadow-sm"
@@ -634,6 +810,52 @@ export const SettingsView: React.FC = () => {
         onCancel={() => setIsConfirmResetOpen(false)}
         variant="danger"
       />
+
+      {isDataMgmtAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-brand/5 px-6 py-4 border-b border-brand/10">
+              <h3 className="text-lg font-bold text-brand">Enter Password</h3>
+              <p className="text-xs text-brand/70 mt-1">Authentication required to access Data Management</p>
+            </div>
+            <div className="p-6">
+              <form onSubmit={handleDataMgmtAuthSubmit} className="space-y-4">
+                {dataMgmtAuthError && (
+                  <div className="rounded-md bg-red-50 p-2 text-xs text-red-600 font-medium">
+                    {dataMgmtAuthError}
+                  </div>
+                )}
+                <div>
+                  <input
+                    type="password"
+                    required
+                    value={dataMgmtAuthPassword}
+                    onChange={(e) => setDataMgmtAuthPassword(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand"
+                    placeholder="Enter your password"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex justify-end space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDataMgmtAuthModalOpen(false)}
+                    className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 transition-colors"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

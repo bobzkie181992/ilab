@@ -5,6 +5,7 @@ import { Plus, Edit2, Trash2, Search, Filter, Wrench, Download, Upload, Eye, QrC
 import { QRCodeSVG } from 'qrcode.react';
 import { EquipmentForm } from './EquipmentForm';
 import { BorrowEquipmentModal } from './BorrowEquipmentModal';
+import { WalkInBorrowModal } from './WalkInBorrowModal';
 import { ViewEquipmentModal } from './ViewEquipmentModal';
 import { QRCodeDisplay } from '../ui/QRCodeDisplay';
 import { BookingStatus, Equipment } from '../../types';
@@ -18,8 +19,9 @@ interface EquipmentViewProps {
 }
 
 export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) => {
-  const { state, addEquipment, updateEquipment, deleteEquipment, checkoutEquipment } = useAppContext();
+  const { state, addEquipment, updateEquipment, deleteEquipment, checkoutEquipment, walkInCheckout } = useAppContext();
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isWalkInModalOpen, setIsWalkInModalOpen] = useState(false);
   const [editingEquipment, setEditingEquipment] = useState<Equipment | undefined>(undefined);
   const [viewingEquipment, setViewingEquipment] = useState<Equipment | undefined>(undefined);
   const [viewingQRCode, setViewingQRCode] = useState<{ value: string; label: string; subLabel?: string } | undefined>(undefined);
@@ -51,10 +53,10 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
 
   const filteredEquipment = state.equipment.filter(eq => {
     const matchesSearch = 
-      eq.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      eq.qrCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      eq.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      eq.lab.toLowerCase().includes(searchQuery.toLowerCase());
+      (eq.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+      (eq.qrCode?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+      (eq.type?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+      (eq.lab?.toLowerCase() || '').includes(searchQuery.toLowerCase());
       
     const matchesStatus = statusFilter === 'All' || eq.status === statusFilter;
     const matchesType = typeFilter === 'All' || eq.type === typeFilter;
@@ -144,7 +146,13 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
         toast.error('Please select at least one item.');
         return;
     }
-    setBorrowItems(items);
+    
+    if (state.currentUser.role === 'Admin') {
+      setBorrowItems(items);
+      setIsWalkInModalOpen(true);
+    } else {
+      setBorrowItems(items);
+    }
   };
     
   const handleBorrow = (item: Equipment) => {
@@ -152,7 +160,13 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
         toast.error('Please log in to borrow equipment.');
         return;
     }
-    setBorrowItems([item]);
+    
+    if (state.currentUser.role === 'Admin') {
+      setBorrowItems([item]);
+      setIsWalkInModalOpen(true);
+    } else {
+      setBorrowItems([item]);
+    }
   };
 
   const handleFormSubmit = (data: any) => {
@@ -370,12 +384,12 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
                   <input 
                     type="checkbox" 
                     checked={
-                      filteredEquipment.filter(e => e.status === 'Available').length > 0 &&
-                      filteredEquipment.filter(e => e.status === 'Available').every(e => selectedEquipmentQrs.includes(e.qrCode))
+                      filteredEquipment.filter(e => e.status !== 'Offline' && e.status !== 'Lost').length > 0 &&
+                      filteredEquipment.filter(e => e.status !== 'Offline' && e.status !== 'Lost').every(e => selectedEquipmentQrs.includes(e.qrCode))
                     }
                     onChange={(e) => {
-                      const availableQrs = filteredEquipment.filter(e => e.status === 'Available').map(e => e.qrCode);
-                      setSelectedEquipmentQrs(e.target.checked ? availableQrs : []);
+                      const bookableQrs = filteredEquipment.filter(e => e.status !== 'Offline' && e.status !== 'Lost').map(e => e.qrCode);
+                      setSelectedEquipmentQrs(e.target.checked ? bookableQrs : []);
                     }}
                   />
                 </th>
@@ -397,7 +411,7 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
                   <td className="px-6 py-4">
                     <input 
                       type="checkbox" 
-                      disabled={item.status !== 'Available'}
+                      disabled={item.status === 'Offline' || item.status === 'Lost'}
                       checked={selectedEquipmentQrs.includes(item.qrCode)} 
                       onChange={() => toggleSelection(item.qrCode)} 
                     />
@@ -432,12 +446,12 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
                         >
                           <Eye className="h-4 w-4" />
                         </button>
-                      {item.status === 'Available' && (
+                      {(item.status !== 'Offline' && item.status !== 'Lost') && (
                         <button
                           onClick={() => handleBorrow(item)}
-                          className="px-3 py-1 text-xs font-bold text-white bg-brand rounded hover:bg-brand/90 transition-colors"
+                          className={`px-3 py-1 text-xs font-bold text-white rounded transition-colors ${item.status === 'Available' ? 'bg-brand hover:bg-brand/90' : 'bg-indigo-600 hover:bg-indigo-700'}`}
                         >
-                          Borrow
+                          {item.status === 'Available' ? 'Borrow' : 'Queue'}
                         </button>
                       )}
                       {canManage && (
@@ -497,13 +511,38 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
       )}
 
       {isBulkPrintMode && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 print:p-0 print:bg-white print:backdrop-none">
-          <div className="bg-white rounded-2xl p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto print:max-h-none print:shadow-none print:p-0">
-            <div className="flex justify-between items-center mb-6 print:hidden">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 print:p-0 print:bg-white print:backdrop-none">
+          <div className="bg-white rounded-2xl p-8 max-w-6xl w-full max-h-[90vh] overflow-y-auto print:max-h-none print:shadow-none print:p-0">
+            <div className="flex justify-between items-center mb-6 print:hidden relative z-[100]">
               <h2 className="text-xl font-bold">Bulk Print QR Codes</h2>
-              <div className="flex space-x-2 border-b border-white">
+              <div className="flex space-x-2">
                 <button 
-                  onClick={() => window.print()}
+                  onClick={() => {
+                      const contentToPrint = document.getElementById('qr-codes-container');
+                      if (!contentToPrint) return;
+                      const printWindow = window.open('', '_blank', 'width=800,height=600');
+                      if (!printWindow) { toast.error('Please allow popups to print'); return; }
+                      printWindow.document.write(`
+                          <html>
+                              <head>
+                                  <title>Print QR Codes</title>
+                                  <script src="https://cdn.tailwindcss.com"></script>
+                              </head>
+                              <body>
+                                  ${contentToPrint.innerHTML}
+                                  <script>
+                                      window.onload = () => {
+                                          setTimeout(() => {
+                                              window.print();
+                                              window.close();
+                                          }, 500);
+                                      }
+                                  </script>
+                              </body>
+                          </html>
+                      `);
+                      printWindow.document.close();
+                  }}
                   className="flex items-center space-x-2 bg-brand text-white px-4 py-2 rounded-lg font-bold"
                 >
                   <Printer className="h-4 w-4" />
@@ -518,7 +557,7 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
               </div>
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-8 print:grid-cols-4 print:gap-4">
+            <div id="qr-codes-container" className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 print:grid-cols-5 print:gap-2">
               {state.equipment
                 .filter(e => selectedEquipmentQrs.includes(e.qrCode))
                 .map(item => (
@@ -547,7 +586,7 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
         />
       )}
 
-      {borrowItems.length > 0 && (
+      {borrowItems.length > 0 && !isWalkInModalOpen && (
         <BorrowEquipmentModal
           isOpen={true}
           items={borrowItems}
@@ -561,6 +600,28 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
             }
             setBorrowItems([]);
             setSelectedEquipmentQrs([]);
+          }}
+        />
+      )}
+
+      {isWalkInModalOpen && (
+        <WalkInBorrowModal 
+          isOpen={true}
+          items={borrowItems}
+          onCancel={() => {
+            setBorrowItems([]);
+            setIsWalkInModalOpen(false);
+          }}
+          onConfirm={(borrowerId, start, ret, purpose) => {
+            const result = walkInCheckout(borrowItems.map(i => i.qrCode), borrowerId, start, ret, purpose);
+            if (result.success) {
+              toast.success(result.message);
+            } else {
+              toast.error(result.message);
+            }
+            setBorrowItems([]);
+            setSelectedEquipmentQrs([]);
+            setIsWalkInModalOpen(false);
           }}
         />
       )}
@@ -647,13 +708,13 @@ const EquipmentItemCard = ({
           <StatusBadge status={item.status} />
         </div>
         
-        {item.status === 'Available' && (
+        {item.status !== 'Offline' && item.status !== 'Lost' && (
           <div className="absolute bottom-2 right-2">
             <button
               onClick={() => onBorrow(item)}
-              className="px-3 py-1 text-xs font-bold text-white bg-brand rounded hover:bg-brand/90 transition-colors shadow-sm"
+              className={`px-3 py-1 text-xs font-bold text-white rounded transition-colors shadow-sm ${item.status === 'Available' ? 'bg-brand hover:bg-brand/90' : 'bg-indigo-600 hover:bg-indigo-700'}`}
             >
-              Borrow
+              {item.status === 'Available' ? 'Borrow' : 'Queue'}
             </button>
           </div>
         )}

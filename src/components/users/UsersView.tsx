@@ -29,10 +29,10 @@ export const UsersView: React.FC = () => {
     if (u.role === 'Admin') return false;
     
     const matchesSearch = 
-      u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.idNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.departmentOrCourse.toLowerCase().includes(searchQuery.toLowerCase());
+      (u.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+      (u.idNumber?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+      (u.email?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+      (u.departmentOrCourse?.toLowerCase() || '').includes(searchQuery.toLowerCase());
       
     const matchesRole = roleFilter === 'All' || u.role === roleFilter;
     
