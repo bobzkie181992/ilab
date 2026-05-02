@@ -179,6 +179,29 @@ db.exec(`
     createdAt TEXT,
     targetView TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS inventory_audits (
+    id TEXT PRIMARY KEY,
+    quarter INTEGER,
+    year INTEGER,
+    startDate TEXT,
+    endDate TEXT,
+    status TEXT,
+    totalItems INTEGER,
+    auditedItems INTEGER,
+    auditorId TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_records (
+    id TEXT PRIMARY KEY,
+    equipmentId TEXT,
+    inventoryAuditId TEXT,
+    auditDate TEXT,
+    auditedBy TEXT,
+    condition TEXT,
+    status TEXT,
+    remarks TEXT
+  );
 `);
 
 // Add targetView to notifications if missing (migration)
@@ -646,6 +669,50 @@ async function startServer() {
   app.put('/api/notifications/:id', (req, res) => {
     const { read } = req.body;
     db.prepare('UPDATE notifications SET read = ? WHERE id = ?').run(read ? 1 : 0, req.params.id);
+    res.json({ success: true });
+  });
+
+  // Inventory Audits
+  app.get('/api/inventory-audits', (req, res) => {
+    res.json(db.prepare('SELECT * FROM inventory_audits ORDER BY startDate DESC').all());
+  });
+
+  app.post('/api/inventory-audits', (req, res) => {
+    const a = req.body;
+    db.prepare(`
+      INSERT INTO inventory_audits (id, quarter, year, startDate, endDate, status, totalItems, auditedItems, auditorId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(a.id, a.quarter, a.year, a.startDate, a.endDate || null, a.status, a.totalItems, a.auditedItems, a.auditorId);
+    res.json({ success: true });
+  });
+
+  app.put('/api/inventory-audits/:id', (req, res) => {
+    const a = req.body;
+    db.prepare(`
+      UPDATE inventory_audits SET 
+        endDate = ?, status = ?, auditedItems = ?
+      WHERE id = ?
+    `).run(a.endDate || null, a.status, a.auditedItems, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete('/api/inventory-audits/:id', (req, res) => {
+    db.prepare('DELETE FROM inventory_audits WHERE id = ?').run(req.params.id);
+    db.prepare('DELETE FROM audit_records WHERE inventoryAuditId = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Audit Records
+  app.get('/api/audit-records', (req, res) => {
+    res.json(db.prepare('SELECT * FROM audit_records ORDER BY auditDate DESC').all());
+  });
+
+  app.post('/api/audit-records', (req, res) => {
+    const r = req.body;
+    db.prepare(`
+      INSERT INTO audit_records (id, equipmentId, inventoryAuditId, auditDate, auditedBy, condition, status, remarks)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(r.id, r.equipmentId, r.inventoryAuditId, r.auditDate, r.auditedBy, r.condition, r.status, r.remarks || null);
     res.json({ success: true });
   });
 

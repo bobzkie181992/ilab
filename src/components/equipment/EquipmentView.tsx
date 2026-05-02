@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../../context/AppContext';
 import { EquipmentGrid } from '../dashboard/EquipmentGrid';
-import { Plus, Edit2, Trash2, Search, Filter, Wrench, Download, Upload, Eye, QrCode, Printer, X } from 'lucide-react';
+import { Plus, Edit2, Trash2, Search, Filter, Wrench, Download, Upload, Eye, QrCode, Printer, X, ClipboardCheck } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { EquipmentForm } from './EquipmentForm';
 import { BorrowEquipmentModal } from './BorrowEquipmentModal';
@@ -13,6 +13,9 @@ import { Card, CardContent } from '../ui/Card';
 import { StatusBadge } from '../ui/Badge';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { toast } from 'sonner';
+import { cn } from '../../lib/utils';
+
+import { InventoryAuditView } from './InventoryAuditView';
 
 interface EquipmentViewProps {
   onMaintenance?: (equipmentId: string) => void;
@@ -20,6 +23,7 @@ interface EquipmentViewProps {
 
 export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) => {
   const { state, addEquipment, updateEquipment, deleteEquipment, checkoutEquipment, walkInCheckout } = useAppContext();
+  const [activeTab, setActiveTab] = useState<'inventory' | 'audit'>('inventory');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isWalkInModalOpen, setIsWalkInModalOpen] = useState(false);
   const [editingEquipment, setEditingEquipment] = useState<Equipment | undefined>(undefined);
@@ -192,8 +196,32 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      {/* ... existing header ... */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex bg-white p-1 rounded-xl border border-slate-200 w-fit">
+        <button 
+          onClick={() => setActiveTab('inventory')}
+          className={cn(
+            "px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center",
+            activeTab === 'inventory' ? "bg-brand text-white shadow-md shadow-brand/20" : "text-slate-500 hover:text-slate-700"
+          )}
+        >
+          <Search className="mr-2 h-4 w-4" />
+          Inventory List
+        </button>
+        <button 
+          onClick={() => setActiveTab('audit')}
+          className={cn(
+            "px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center",
+            activeTab === 'audit' ? "bg-brand text-white shadow-md shadow-brand/20" : "text-slate-500 hover:text-slate-700"
+          )}
+        >
+          <ClipboardCheck className="mr-2 h-4 w-4" />
+          Quarterly Audits
+        </button>
+      </div>
+
+      {activeTab === 'inventory' ? (
+        <>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-lab-text">Equipment</h2>
           <p className="text-slate-500 text-sm">Manage and track all laboratory equipment.</p>
@@ -490,6 +518,10 @@ export const EquipmentView: React.FC<EquipmentViewProps> = ({ onMaintenance }) =
           )}
         </div>
       )}
+    </>
+    ) : (
+      <InventoryAuditView />
+    )}
 
       {viewingEquipment && (
         <ViewEquipmentModal

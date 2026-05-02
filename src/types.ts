@@ -176,6 +176,29 @@ export interface SystemSettings {
   adminEscalation: boolean;
 }
 
+export interface AuditRecord {
+  id: string;
+  equipmentId: string;
+  inventoryAuditId: string;
+  auditDate: string;
+  auditedBy: string;
+  condition: EquipmentCondition;
+  status: EquipmentStatus;
+  remarks?: string;
+}
+
+export interface InventoryAudit {
+  id: string;
+  quarter: 1 | 2 | 3 | 4;
+  year: number;
+  startDate: string;
+  endDate?: string;
+  status: 'Draft' | 'In Progress' | 'Completed';
+  totalItems: number;
+  auditedItems: number;
+  auditorId: string;
+}
+
 export interface SystemState {
   isOnline: boolean;
   currentUser: User | null;
@@ -188,6 +211,8 @@ export interface SystemState {
   maintenanceLogs: MaintenanceLog[];
   attendanceLogs: AttendanceLog[];
   softwareRequests: SoftwareRequest[];
+  inventoryAudits: InventoryAudit[];
+  auditRecords: AuditRecord[];
   policies: Record<BorrowerRole, RulePolicy>;
   notifications: Notification[];
   settings: SystemSettings;

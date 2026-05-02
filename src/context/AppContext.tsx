@@ -8,6 +8,8 @@ import {
   EquipmentStatus,
   DEFAULT_POLICIES, 
   BorrowerRole, 
+  AuditRecord,
+  InventoryAudit,
   RulePolicy,
   SystemSettings,
   User,
@@ -70,6 +72,11 @@ interface AppContextType {
   addMaintenanceLog: (log: MaintenanceLog | Omit<MaintenanceLog, 'id'>) => void;
   updateMaintenanceLog: (id: string, updates: Partial<MaintenanceLog>) => void;
   deleteMaintenanceLog: (id: string) => void;
+  // Audits
+  startInventoryAudit: (quarter: 1 | 2 | 3 | 4, year: number) => string;
+  addAuditRecord: (record: Omit<AuditRecord, 'id' | 'auditDate'>) => void;
+  completeInventoryAudit: (id: string) => void;
+  deleteInventoryAudit: (id: string) => void;
   
   createSoftwareRequest: (formData: FormData) => Promise<{ success: boolean; message: string }>;
   updateSoftwareRequestStatus: (id: string, status: SoftwareRequestStatus) => void;
@@ -99,6 +106,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     maintenanceLogs: [],
     attendanceLogs: [],
     softwareRequests: [],
+    inventoryAudits: [],
+    auditRecords: [],
     policies: DEFAULT_POLICIES,
     notifications: [],
     settings: {
@@ -124,6 +133,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           logsRes,
           attnRes,
           srRes,
+          auditRes,
+          auditRecRes,
           settingsRes,
         ] = await Promise.all([
           fetch('/api/users'),
@@ -135,6 +146,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           fetch('/api/pm-logs'),
           fetch('/api/attendance-logs'),
           fetch('/api/software-requests'),
+          fetch('/api/inventory-audits'),
+          fetch('/api/audit-records'),
           fetch('/api/settings'),
           fetch('/api/notifications'),
         ]);
@@ -149,6 +162,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           maintenanceLogs,
           attendanceLogs,
           softwareRequests,
+          inventoryAudits,
+          auditRecords,
           settings,
           notifications,
         ] = await Promise.all([
@@ -161,6 +176,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           logsRes.json(),
           attnRes.json(),
           srRes.json(),
+          auditRes.json(),
+          auditRecRes.json(),
           settingsRes.json(),
           (await fetch('/api/notifications')).json(), // Direct fetch for simplicity in Promise.all mapping if I missed one earlier
         ]);
@@ -176,6 +193,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           maintenanceLogs,
           attendanceLogs,
           softwareRequests,
+          inventoryAudits,
+          auditRecords,
           notifications,
           settings: settings || prev.settings
         }));
@@ -577,6 +596,108 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setState(prev => ({
       ...prev,
       maintenanceLogs: prev.maintenanceLogs.filter(log => log.id !== id)
+    }));
+  };
+
+  const startInventoryAudit = (quarter: 1 | 2 | 3 | 4, year: number) => {
+    const id = `audit-${Date.now()}`;
+    const newAudit: InventoryAudit = {
+      id,
+      quarter,
+      year,
+      startDate: new Date().toISOString(),
+      status: 'In Progress',
+      totalItems: state.equipment.length,
+      auditedItems: 0,
+      auditorId: state.currentUser?.id || ''
+    };
+
+    fetch('/api/inventory-audits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newAudit)
+    });
+
+    setState(prev => ({
+      ...prev,
+      inventoryAudits: [newAudit, ...prev.inventoryAudits]
+    }));
+
+    return id;
+  };
+
+  const addAuditRecord = (recordData: Omit<AuditRecord, 'id' | 'auditDate'>) => {
+    const newRecord: AuditRecord = {
+      ...recordData,
+      id: `rec-${Date.now()}`,
+      auditDate: new Date().toISOString(),
+      auditedBy: state.currentUser?.name || 'Unknown'
+    };
+
+    fetch('/api/audit-records', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newRecord)
+    });
+
+    // Update the equipment status/condition if needed
+    updateEquipment(recordData.equipmentId, {
+      status: recordData.status,
+      condition: recordData.condition
+    });
+
+    // Update audit progress
+    const audit = state.inventoryAudits.find(a => a.id === recordData.inventoryAuditId);
+    if (audit) {
+      const alreadyAudited = state.auditRecords.some(r => r.equipmentId === recordData.equipmentId && r.inventoryAuditId === recordData.inventoryAuditId);
+      if (!alreadyAudited) {
+        const updatedAudit = { ...audit, auditedItems: audit.auditedItems + 1 };
+        fetch(`/api/inventory-audits/${audit.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedAudit)
+        });
+        setState(prev => ({
+          ...prev,
+          inventoryAudits: prev.inventoryAudits.map(a => a.id === audit.id ? updatedAudit : a),
+          auditRecords: [newRecord, ...prev.auditRecords]
+        }));
+      } else {
+        setState(prev => ({
+          ...prev,
+          auditRecords: [newRecord, ...prev.auditRecords]
+        }));
+      }
+    } else {
+      setState(prev => ({
+        ...prev,
+        auditRecords: [newRecord, ...prev.auditRecords]
+      }));
+    }
+  };
+
+  const completeInventoryAudit = (id: string) => {
+    const audit = state.inventoryAudits.find(a => a.id === id);
+    if (audit) {
+      const updated = { ...audit, status: 'Completed' as const, endDate: new Date().toISOString() };
+      fetch(`/api/inventory-audits/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      setState(prev => ({
+        ...prev,
+        inventoryAudits: prev.inventoryAudits.map(a => a.id === id ? updated : a)
+      }));
+    }
+  };
+
+  const deleteInventoryAudit = (id: string) => {
+    fetch(`/api/inventory-audits/${id}`, { method: 'DELETE' });
+    setState(prev => ({
+      ...prev,
+      inventoryAudits: prev.inventoryAudits.filter(a => a.id !== id),
+      auditRecords: prev.auditRecords.filter(r => r.inventoryAuditId !== id)
     }));
   };
 
@@ -1112,6 +1233,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addMaintenanceLog,
       updateMaintenanceLog,
       deleteMaintenanceLog,
+      startInventoryAudit,
+      addAuditRecord,
+      completeInventoryAudit,
+      deleteInventoryAudit,
       approveTransaction,
       releaseEquipment,
       walkInCheckout,
