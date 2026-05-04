@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { 
   Equipment, 
   SystemState, 
@@ -205,6 +206,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     fetchData();
   }, []);
+
+  // Auto Logout Logic
+  useEffect(() => {
+    if (!state.currentUser) return;
+
+    let logoutTimer: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      if (logoutTimer) clearTimeout(logoutTimer);
+      logoutTimer = setTimeout(() => {
+        logout();
+        toast.info('Session Expired', {
+          description: 'You have been logged out due to 30 minutes of inactivity.',
+          duration: 10000
+        });
+      }, 30 * 60 * 1000); // 30 minutes
+    };
+
+    // Events to monitor for user activity
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    
+    const activityHandler = () => {
+      resetTimer();
+    };
+
+    events.forEach(event => {
+      window.addEventListener(event, activityHandler);
+    });
+
+    // Initialize timer
+    resetTimer();
+
+    return () => {
+      if (logoutTimer) clearTimeout(logoutTimer);
+      events.forEach(event => {
+        window.removeEventListener(event, activityHandler);
+      });
+    };
+  }, [state.currentUser]);
 
   useEffect(() => {
     const timer = setInterval(() => {
